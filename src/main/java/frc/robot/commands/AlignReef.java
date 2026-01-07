@@ -19,6 +19,7 @@ import frc.robot.Constants;
 import frc.robot.Constants.*;
 import frc.robot.LimelightHelpers;
 import frc.robot.RobotContainer;
+import frc.robot.RobotStateMachine;
 import frc.robot.generated.TunerConstants;
 import frc.robot.subsystems.CommandSwerveDrivetrain;
 import frc.robot.subsystems.LimelightSubsystem;
@@ -29,6 +30,7 @@ public class AlignReef extends Command {
     private LimelightSubsystem limelight;
     private CommandSwerveDrivetrain drivetrain;
     private RobotContainer robotContainer;
+    private RobotStateMachine stateMachine;
 
     Timer timer = new Timer();
     
@@ -40,10 +42,10 @@ public class AlignReef extends Command {
     ;  // Max rotation speed (rad/s)
 
     /* ----- PIDs ----- */
-    // TUNE: Increase kP for faster approach, decrease if overshooting
-    private PIDController pidDistance = new PIDController(6.0, maxVelocity * 0.5, maxVelocity * 0.25);  // Translation: Increase P for more aggressive, decrease for smoother
-    // TUNE: Increase kP for faster rotation, decrease if rotation is jerky
-    private PIDController pidRotate = new PIDController(4.0, 3.0, 1.5);    // Rotation: Increase P for faster snap, decrease for smooth turn
+    // 6,6,3
+    private PIDController pidX = new PIDController(8, 0, 0.01); //From kp 6
+    private PIDController pidY = new PIDController(8, 0, 0.01); //From kp 6
+    private PIDController pidRotate = new PIDController(3, 0, 0.02); 
 
     // Creates a swerve request that specifies the robot to move FieldCentric
     private final SwerveRequest.FieldCentric driveRequest = new SwerveRequest.FieldCentric()
@@ -53,6 +55,16 @@ public class AlignReef extends Command {
 
     // The Desired position to go to
     private Pose2d targetPose;
+    // The speed to move to position
+    private final double speed = 3.5; // From 1
+    // The speed (rad/s) to rotate to position
+    private final double rotationSpeed = 0.9; //1.25
+    // The tolerance before stopping align (meters)
+    private final double positionTolerance = 0.02; // From 0.01
+    // The tolerance for yaw alignment (radians)
+    private final double yawTolerance = Math.PI / 32; //From math.pi/32
+    // Indicates if alignment uses PID Control
+    private final boolean usingPID = true;
 
     /* ----- FRICTION COMPENSATION ----- */
     // TUNE: Increase if robot stops short of target, decrease if overshooting
@@ -88,6 +100,7 @@ public class AlignReef extends Command {
         this.robotContainer = robotContainer;
         this.drivetrain = robotContainer.drivetrain;
         this.limelight = robotContainer.limelight;
+        this.stateMachine = RobotStateMachine.getInstance();
         this.reefPos = reefPos;
 
         // -180 and 180 degrees are the same point, so its continuous
@@ -100,9 +113,19 @@ public class AlignReef extends Command {
 
     @Override
     public void initialize(){
+        // STATE MACHINE INTEGRATION - Only set drivetrain mode, NOT game state!
+        // This allows alignment to run independently of intake/scoring operations
+        // (e.g., driver can align while coral is still being transferred)
+        stateMachine.setDrivetrainMode(RobotStateMachine.DrivetrainMode.VISION_TRACKING);
+        // I removed stateMachine.setGameState(RobotStateMachine.GameState.ALIGNING_TO_SCORE) because GameState is now managed independently by SuperstructureSubsystem
+        
+        // Reset alignment flag at start
+        stateMachine.setAlignedToTarget(false);
+        
         // Starts timer
         timer.restart();
-        lastVisionUpdateTime = 0;
+        Logger.recordOutput("AlignReef/CommandStarted", true);
+        Logger.recordOutput("AlignReef/StartTime", timer.get());
         
         SmartDashboard.putBoolean("AlignReef/CommandStarted", true);
         SmartDashboard.putNumber("AlignReef/StartTime", timer.get());
@@ -116,8 +139,69 @@ public class AlignReef extends Command {
             return;
         }
 
-        tID = limelight.getTid();
-        SmartDashboard.putNumber("AlignReef/DetectedTagID", tID);
+        for (int id : Constants.AprilTagMaps.aprilTagMap.keySet()) {
+            double[] aprilTagList = Constants.AprilTagMaps.aprilTagMap.get(id);
+            Pose2d aprilTagPose = new Pose2d(aprilTagList[0] * Constants.inToM, aprilTagList[1] * Constants.inToM, new Rotation2d(aprilTagList[3] * Math.PI / 180));
+            double distance = calculateDistance(robotPose, aprilTagPose);
+            if (distance < minDistance) {
+                minDistance = distance;
+                tID = id;
+                targetPose = aprilTagPose;
+            }
+        }
+    
+        // Check if a tag was found
+        if (minDistance == Double.MAX_VALUE) {
+            tagDetected = false;
+            System.out.println("Error: No AprilTag found.");
+            Logger.recordOutput("Reefscape/AlignReef/Error", "No AprilTag found.");
+            return;
+        }
+    
+        // Store the first detected tag ID
+        if (storedTagID == null) {
+            storedTagID = tID;
+            Logger.recordOutput("Reefscape/AlignReef/StoredTagID", storedTagID);
+            System.out.println("[DEBUG STORED TAG ID]" + storedTagID);
+        }
+
+        // Log the closest tag ID and pose
+        Logger.recordOutput("Reefscape/AlignReef/TargetTagID", tID);
+        System.out.println("[DEBUG TAG ID]" + tID);
+        Logger.recordOutput("Reefscape/AlignReef/AprilTagPose", targetPose);
+        System.out.println("[DEBUG TARGET POSE]" + targetPose);
+
+        // Gets the tag ID that is being targeted from Limelight
+        // Check if limelight has a valid tag before using its ID
+        int limelightTagID = limelight.getTid();
+        System.out.println("[DEBUG] Limelight detected tag ID: " + limelightTagID);
+        Logger.recordOutput("Reefscape/AlignReef/LimelightDetectedTagID", limelightTagID);
+        
+        // Only use limelight tag if it's valid (not 0) and exists in our map
+        if (limelightTagID != 0 && Constants.AprilTagMaps.aprilTagMap.containsKey(limelightTagID)) {
+            tID = limelightTagID;
+            System.out.println("[DEBUG] Using limelight tag ID: " + tID);
+        } else if (limelightTagID == 0) {
+            System.out.println("[DEBUG] Limelight has no valid tag (returned 0). Using closest tag from odometry: " + tID);
+            Logger.recordOutput("Reefscape/AlignReef/Warning", "Limelight returned tag ID 0, using odometry-based closest tag");
+        } else {
+            System.out.println("[DEBUG] Limelight tag ID " + limelightTagID + " not in AprilTag map. Using closest tag from odometry: " + tID);
+            Logger.recordOutput("Reefscape/AlignReef/Warning", "Limelight tag not in map, using odometry-based closest tag");
+        }
+        
+        // Use the determined tag ID (either from limelight or from closest calculation)
+        // tID is already set from either limelight or the closest tag calculation above
+ 
+/*         // Check if we initially see tag 10
+        if (tID == 10) {
+            initiallyDetectedTag10 = true;
+            System.out.println("Detected tag 10 - gonna keep this target if tag 11 appears");
+            Logger.recordOutput("Reefscape/AlignReef/InitiallyDetectedTag10", true);
+        } else if (tID == 21) {
+            initiallyDetectedTag21 = true;
+            System.out.println("Detected tag 21 - gonna keep this target if tag 20 appears");
+            Logger.recordOutput("Reefscape/AlignReef/InitiallyDetectedTag21", true);
+        } */
 
         // Calculate target pose based on the detected tag
         if (!calculateTargetPose()) {
@@ -228,10 +312,168 @@ is     */
         // Get the vision-based pose estimate
         var llMeasurement = LimelightHelpers.getBotPoseEstimate_wpiBlue_MegaTag2("limelight");
         
-        if (llMeasurement != null && llMeasurement.tagCount > 0) {
-            // Reset translation only (not rotation) to avoid jerky movements
-            // This corrects position drift while keeping rotation smooth
-            Pose2d visionPose = llMeasurement.pose;
+        // List of X, Y, Yaw velocities to go to target pose
+        double[] velocities;
+        
+        // PID Alignment
+        if (usingPID){
+            // Calculates required velocities, rotates before moving
+            velocities = calculateErrorPID(currentPose, true);
+        }
+        // Regular Alignment
+        else{ 
+            // Calculates required velocities, rotates before moving           
+            velocities = calculateError(currentPose, true);
+        }
+        
+        // Logs values
+        SmartDashboard.putNumberArray("Target Pose", new double[]{targetPose.getX(), targetPose.getY(), targetPose.getRotation().getDegrees()});
+        SmartDashboard.putNumberArray("Current Pose", new double[]{currentPose.getX(), currentPose.getY(), currentPose.getRotation().getDegrees()});
+        SmartDashboard.putNumberArray("Target Vector", new double[]{velocities[0], velocities[1], velocities[2]});
+        Logger.recordOutput("Reefscape/AlignReef/Velocities", velocities);
+
+        // The direction flips for the red side
+        boolean isFlippingDirection = Constants.contains(new double[]{6, 7, 8, 9, 10, 11}, tID);
+        Logger.recordOutput("Reefscape/AlignReef/FlippedDirection", isFlippingDirection);
+
+        // Moves the drivetrain
+        if (isFlippingDirection){
+            drivetrain.setControl(driveRequest.withVelocityX(velocities[-0]).withVelocityY(velocities[1]).withRotationalRate(velocities[2]));
+        }
+        else{
+            drivetrain.setControl(driveRequest.withVelocityX(velocities[-0]).withVelocityY(velocities[1]).withRotationalRate(velocities[2]));
+        }
+
+    }
+
+/*     // Maintain targeting a specific tag when a different one is detected
+    private void maintainTargetTag(int targetTagID, int ignoredTagID) {
+        System.out.println("Saw tag " + ignoredTagID + ". Gonna continue targeting tag " + targetTagID);
+        Logger.recordOutput("Reefscape/AlignReef/MaintainingTag" + targetTagID, true);
+        tID = targetTagID;
+        
+        // Get the target pose for the specified tag
+        double[] tagList = Constants.AprilTagMaps.aprilTagMap.get(targetTagID);
+        if (tagList != null) {
+            // Get the tag pose
+            Pose2d tagPose = new Pose2d(
+                tagList[0] * Constants.inToM, 
+                tagList[1] * Constants.inToM, 
+                new Rotation2d(tagList[3] * Math.PI / 180)
+            );
+            
+            // Get the target rotation
+            double targetRotation = tagPose.getRotation().getRadians() - Math.PI;
+            targetRotation = MathUtil.angleModulus(targetRotation);
+            
+            // Calculate the rotated offsets
+            double newOffsetX = (offsetX * Math.cos(targetRotation)) - (offsetY * Math.sin(targetRotation));
+            double newOffsetY = (offsetX * Math.sin(targetRotation)) + ((offsetY * Math.cos(targetRotation)));
+            
+            // Update the target pose to use the tag's position with the offsets
+            targetPose = new Pose2d(
+                tagPose.getX() + newOffsetX,
+                tagPose.getY() + newOffsetY, 
+                new Rotation2d(targetRotation)
+            );
+            
+            // Update PID setpoints
+            pidX.setSetpoint(targetPose.getX());
+            pidY.setSetpoint(targetPose.getY());
+            pidRotate.setSetpoint(targetPose.getRotation().getRadians());
+            
+            Logger.recordOutput("Reefscape/AlignReef/UpdatedTargetPose", targetPose);
+        }
+    } */
+
+    // Calculates the needed velocities to get to the target pose
+    public double[] calculateError(Pose2d currentPose, boolean rotateFirst){
+         // Finds the translation difference (X2-X1, Y2-Y1) between the current and target pose
+         Translation2d error = targetPose.getTranslation().minus(currentPose.getTranslation());
+         // Finds the hypotenuse distance to the desired point
+         double distance = error.getNorm();
+         Logger.recordOutput("Reefscape/AlignReef/TranslationError", new double[]{error.getX(), error.getY()});
+         Logger.recordOutput("Reefscape/AlignReef/Distance", distance);
+         // This gets the robots current rotation (rad)
+         // AngleModulus normalizes the difference to always take the shortest path
+         double yawError = MathUtil.angleModulus(targetPose.getRotation().getRadians() - currentPose.getRotation().getRadians());
+         Logger.recordOutput("Reefscape/AlignReef/YawError", yawError);
+
+         // Intitializes rotation rates
+         double velocityX = 0.0;
+         double velocityY = 0.0;
+         double velocityYaw = 0.0;
+
+         // Movement Correction
+        if (distance > positionTolerance) {
+            // Normalizes the error vector into a unit vector (value between -1 to 1) and applies the speed
+            // The error vector represent both the direction and magnitude as the same. 
+            velocityX = (error.getX() / distance) * speed;
+            velocityY = (error.getY() / distance) * speed;
+        } 
+        else {
+            // Wont move if within tolerance
+            velocityX = 0;
+            velocityY = 0;
+        }
+        // Rotational Correction 
+        if (Math.abs(yawError) > yawTolerance) {
+            velocityYaw = calculateYawVelocity(yawError);
+            if (rotateFirst){
+                velocityX = 0;
+                velocityY = 0;
+            }
+        } 
+        else {
+            // Wont rotate if within tolerance
+            velocityYaw = 0;
+        }
+        // Returns the X, Y, Yaw powers
+        double[] result = new double[]{velocityX, velocityY, velocityYaw};
+        Logger.recordOutput("Reefscape/AlignReef/CalculatedVelocities", result);
+        return result;
+    }   
+
+    // Calculates the needed velocities to get to the target pose with PID
+    private double[] calculateErrorPID(Pose2d currentPose, boolean rotateFirst){
+        // Calculates the power for X direction and clamp it between -1 and 1
+        double velocityX = pidX.calculate(currentPose.getX());
+        velocityX = MathUtil.clamp(velocityX, -speed, speed);
+        
+        // Calculates the power for Y direction and clamp it between -1 and 1
+        double velocityY = pidY.calculate(currentPose.getY());
+        velocityY = MathUtil.clamp(velocityY, -speed, speed);
+        // Calculates the power for the Rotation direction and clamps it between -2 and 2
+        double velocityYaw = pidRotate.calculate(currentPose.getRotation().getRadians());
+        velocityYaw = MathUtil.clamp(velocityYaw, -2, 2);
+        // Logs PID values
+        Logger.recordOutput("Reefscape/Limelight/x error", pidX.getError());
+        Logger.recordOutput("Reefscape/Limelight/y error", pidY.getError());
+        Logger.recordOutput("Reefscape/AlignReef/RotationalError", pidRotate.getError());
+        Logger.recordOutput("Reefscape/Limelight/PIDOutputX", velocityX);
+        Logger.recordOutput("Reefscape/Limelight/PIDOutputY", velocityY);
+        Logger.recordOutput("Reefscape/AlignReef/PIDOutputYaw", velocityYaw);
+
+        // Returns the X, Y, Yaw powers
+        double[] result = new double[]{velocityX, velocityY, velocityYaw};
+        Logger.recordOutput("Reefscape/AlignReef/CalculatedPIDVelocities", result);
+        return result;
+    }
+
+    // Returns the velocity for the yaw
+    private double calculateYawVelocity(double yawError) {
+        return Math.signum(yawError) * rotationSpeed;
+    }
+
+    // Called every 20ms to check if command is ended
+    @Override
+    public boolean isFinished(){
+        // If a tag wasn't detected, command will end
+        if (!tagDetected){
+            //return true;
+        }
+        // Without PID, it will check until the tolerance is reached
+        if (!usingPID){
             Pose2d currentPose = drivetrain.getState().Pose;
             
             // Create a new pose with vision translation but current rotation
@@ -317,12 +559,43 @@ is     */
 
     @Override
     public void end(boolean interrupted) {
+        // STATE MACHINE INTEGRATION - Return to normal drive mode
+        // Only change drivetrain mode, NOT game state!
+        stateMachine.setDrivetrainMode(RobotStateMachine.DrivetrainMode.FIELD_CENTRIC);
+        
+        // Set alignment flag based on whether command completed successfully
+        if (!interrupted) {
+            stateMachine.setAlignedToTarget(true);
+            System.out.println("AlignReef completed - robot aligned to target");
+        } else {
+            stateMachine.setAlignedToTarget(false);
+            System.out.println("AlignReef interrupted - alignment not confirmed");
+        }
+        
+        // I removed setting CORAL_LOADED state - this is managed by SuperstructureSubsystem
+        // The alignment command should not assume what state the manipulator is in
+        
+        // Ensures drivetrain stop
+        drivetrain.setControl(stop);
+        robotContainer.MaxSpeed = TunerConstants.kSpeedAt12Volts.in(MetersPerSecond) * 0.7; //remove 0.7
+        
+        // AdvantageKit logging
+        Logger.recordOutput("AlignReef/CommandEnded", true);
+        Logger.recordOutput("AlignReef/Interrupted", interrupted);
+        Logger.recordOutput("AlignReef/EndTime", timer.get());
+        Logger.recordOutput("AlignReef/TotalDuration", timer.get());
+        
+        // SmartDashboard (legacy)
         SmartDashboard.putBoolean("AlignReef/CommandEnded", true);
         SmartDashboard.putBoolean("AlignReef/Interrupted", interrupted);
         SmartDashboard.putNumber("AlignReef/EndTime", timer.get());
+        SmartDashboard.putNumber("AlignReef/TotalDuration", timer.get());
         
-        drivetrain.setControl(stop); //May or may not be needed
-        robotContainer.MaxSpeed = TunerConstants.kSpeedAt12Volts.in(MetersPerSecond);
+        if (interrupted) {
+            System.out.println("AlignReef interrupted.");
+        } else {
+            System.out.println("AlignReef completed.");
+        }
     }
 
     @Override

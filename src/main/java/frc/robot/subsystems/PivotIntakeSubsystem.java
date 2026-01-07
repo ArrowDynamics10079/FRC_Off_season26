@@ -17,6 +17,8 @@ import com.ctre.phoenix6.signals.FeedbackSensorSourceValue;
 import com.ctre.phoenix6.hardware.CANrange;
 
 import edu.wpi.first.units.Units.*;
+import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
@@ -43,6 +45,12 @@ public class PivotIntakeSubsystem extends SubsystemBase {
     
     // Current pivot setpoint
     private double currentSetpoint = PivotIntakeConstants.STOWED_POSITION;
+    
+    // Track previous setpoint to detect changes
+    private double previousSetpoint = PivotIntakeConstants.STOWED_POSITION;
+
+    // Track previous enabled state for safety - stop motors on disable
+    private boolean wasDisabled = true;
     
     // Track if coral has been collected (set manually after collection)
     private boolean hasCoralInIntake = false;
@@ -156,10 +164,13 @@ public class PivotIntakeSubsystem extends SubsystemBase {
     }
     
     // Set the pivot position setpoint
+    // State machine updates this, and periodic() handles the actual motor control
     public void setPivotSetpoint(double setpoint) {
-        currentSetpoint = setpoint;
-        // Command the motor to the target position
-        pivotMotor.setControl(motionMagic.withPosition(setpoint));
+        if (setpoint != currentSetpoint) {
+            System.out.println("Pivot setpoint changed: " + currentSetpoint + " -> " + setpoint);
+            currentSetpoint = setpoint;
+        }
+        // Motor control is handled in periodic() for state machine integration
     }
     
     // Get current pivot position
@@ -212,6 +223,10 @@ public class PivotIntakeSubsystem extends SubsystemBase {
     public Command stowPivot() {
         return Commands.runOnce(() -> setPivotSetpoint(PivotIntakeConstants.STOWED_POSITION));
     }
+
+    public Command moveSlightlyUpPivot() {
+        return Commands.runOnce(() -> setPivotSetpoint(PivotIntakeConstants.STOWED_POSITION_WITH_CORAL));
+    }
     
     // Command to move pivot to intake position
     public Command deployPivot() {
@@ -230,12 +245,12 @@ public class PivotIntakeSubsystem extends SubsystemBase {
     
     // Command to run intake wheels in reverse (for scoring)
     public Command reverseIntakeWheels() {
-        return Commands.run(() -> setIntakeSpeed(PivotIntakeConstants.INTAKE_REVERSE_SPEED), this);
+        return Commands.runOnce(() -> setIntakeSpeed(PivotIntakeConstants.INTAKE_REVERSE_SPEED), this);
     }
     
-    // Command to stop intake wheels
+    // Command to stop intake wheels - ONE-TIME COMMAND, not continuous
     public Command stopWheels() {
-        return Commands.run(() -> setIntakeSpeed(0), this);
+        return Commands.runOnce(() -> setIntakeSpeed(0), this);
     }
     
     /**
@@ -397,7 +412,35 @@ public class PivotIntakeSubsystem extends SubsystemBase {
     
     @Override
     public void periodic() {
-        // Motor is controlled via position control set in setPivotSetpoint()
+        // SAFETY: Stop intake wheels when robot is disabled
+        // This prevents the intake from spinning when re-enabled after disable
+        boolean isDisabled = DriverStation.isDisabled();
+        
+        if (isDisabled) {
+            // Force stop intake wheels when disabled for safety
+            intakeWheelMotor.set(0);
+            
+            // Also reset pivot to stowed position on disable
+            if (currentSetpoint != PivotIntakeConstants.STOWED_POSITION) {
+                System.out.println("[SAFETY] PivotIntake disabled - resetting setpoint to STOWED");
+                currentSetpoint = PivotIntakeConstants.STOWED_POSITION;
+            }
+        } else if (wasDisabled) {
+            // Just became enabled - ensure we start from stowed
+            System.out.println("[SAFETY] PivotIntake enabled - starting from STOWED position");
+            currentSetpoint = PivotIntakeConstants.STOWED_POSITION;
+        }
+        
+        wasDisabled = isDisabled;
+
+        // Log setpoint changes for debugging
+        if (currentSetpoint != previousSetpoint) {
+            System.out.println("Pivot periodic: Moving to setpoint " + currentSetpoint + " (currently at " + getPivotPosition() + ")");
+            previousSetpoint = currentSetpoint;
+        }
+        
+        // When the state machine updates currentSetpoint via setPivotSetpoint() continuously command the motor to maintain that position
+        pivotMotor.setControl(motionMagic.withPosition(currentSetpoint));
         
         // Update SmartDashboard
         SmartDashboard.putNumber("Pivot Position", getPivotPosition());

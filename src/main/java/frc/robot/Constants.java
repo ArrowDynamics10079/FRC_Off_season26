@@ -18,6 +18,40 @@ public final class Constants {
         RIGHT
     }
 
+    // CORAL DETECTION CONSTANTS
+    public static class CoralDetectionConstants {
+        public static final String LIMELIGHT_NAME = "limelight-coral";
+        
+        // Camera position on robot (PLACEHOLDER from 1678)
+        // Forward/back from robot center (positive = forward)
+        public static final double CAMERA_OFFSET_X_INCHES = -0.261181;
+        // Left/right from robot center (positive = left)
+        public static final double CAMERA_OFFSET_Y_INCHES = -0.261181;
+        // Height from ground (positive = up)
+        public static final double CAMERA_OFFSET_Z_INCHES = 39.400;
+        
+        // Camera angles (in degrees)
+        // Pitch = tilt up/down (negative = looking down)
+        public static final double CAMERA_PITCH_DEGREES = -35.0;
+        // Yaw = rotation left/right
+        public static final double CAMERA_YAW_DEGREES = 0.0;
+        // Roll = tilt side to side
+        public static final double CAMERA_ROLL_DEGREES = 0.0;
+        
+        // Pipeline index
+        public static final int CORAL_DETECTION_PIPELINE = 0;
+        
+        // Coral dimensions
+        public static final double CORAL_DIAMETER_INCHES = 4.5;
+        
+        // Neural network class ID for coral
+        public static final int CORAL_CLASS_ID = 1;
+        
+        // Detection tracking
+        public static final double DETECTION_TIMEOUT_SECONDS = 0.2;
+        public static final int MAX_TRACKED_CORALS = 20;
+    }
+
     // Pivot Intake Constants - These things should be adjusted to actual vals
     public static class PivotIntakeConstants {
         // Motor CAN IDs
@@ -31,13 +65,13 @@ public final class Constants {
         // The robot physically starts at stowed position
         // Encoder offset is applied in PivotIntakeSubsystem constructor
         public static final double STOWED_POSITION = 0.46;          // Home position
-        public static final double STOWED_POSITION_WITH_CORAL = 0.438; // Slightly above stowed for coral transfer
+        public static final double STOWED_POSITION_WITH_CORAL = 0.367; // Slightly above stowed for coral transfer - THIS NEEDS TO BE HIGHER!!!!!
         public static final double INTAKE_POSITION = 0.0;         // Ground collection
         public static final double REEF_SCORING_POSITION = 0.25;   // Reef scoring position
         
         // Motor speeds
-        public static final double INTAKE_SPEED = -0.3;             // Collecting coral
-        public static final double INTAKE_REVERSE_SPEED = 0.3;    // Intake wheels reverse during scoring
+        public static final double INTAKE_SPEED = -0.45;             // Collecting coral
+        public static final double INTAKE_REVERSE_SPEED = 0.15;    // Intake wheels reverse during scoring
         
         // Sensor thresholds
         public static final double CORAL_DETECTED_DISTANCE_M = 0.03;
