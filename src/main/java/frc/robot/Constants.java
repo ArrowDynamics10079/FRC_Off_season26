@@ -18,6 +18,40 @@ public final class Constants {
         RIGHT
     }
 
+    // CORAL DETECTION CONSTANTS
+    public static class CoralDetectionConstants {
+        public static final String LIMELIGHT_NAME = "limelight-coral";
+        
+        // Camera position on robot (PLACEHOLDER from 1678)
+        // Forward/back from robot center (positive = forward)
+        public static final double CAMERA_OFFSET_X_INCHES = -0.261181;
+        // Left/right from robot center (positive = left)
+        public static final double CAMERA_OFFSET_Y_INCHES = -0.261181;
+        // Height from ground (positive = up)
+        public static final double CAMERA_OFFSET_Z_INCHES = 39.400;
+        
+        // Camera angles (in degrees)
+        // Pitch = tilt up/down (negative = looking down)
+        public static final double CAMERA_PITCH_DEGREES = -35.0;
+        // Yaw = rotation left/right
+        public static final double CAMERA_YAW_DEGREES = 0.0;
+        // Roll = tilt side to side
+        public static final double CAMERA_ROLL_DEGREES = 0.0;
+        
+        // Pipeline index
+        public static final int CORAL_DETECTION_PIPELINE = 0;
+        
+        // Coral dimensions
+        public static final double CORAL_DIAMETER_INCHES = 4.5;
+        
+        // Neural network class ID for coral
+        public static final int CORAL_CLASS_ID = 1;
+        
+        // Detection tracking
+        public static final double DETECTION_TIMEOUT_SECONDS = 0.2;
+        public static final int MAX_TRACKED_CORALS = 20;
+    }
+
     // Pivot Intake Constants - These things should be adjusted to actual vals
     public static class PivotIntakeConstants {
         // Motor CAN IDs
@@ -51,68 +85,6 @@ public final class Constants {
         public static final double PIVOT_KG = -3; // Increased from .45 
         //public static final double PIVOT_KA = 3; // Feedforward thingy
         public static final double PIVOT_TOLERANCE = 0.09; // Increased from 0.02 - less tight for faster settling
-    }
-
-    // Coral Detection Constants
-    public static class CoralDetectionConstants {
-        // Limelight name for coral detection camera
-        public static final String LIMELIGHT_NAME = "limelight-coral";
-        
-        // Pipeline index for neural network detection
-        public static final int NEURAL_NETWORK_PIPELINE = 0;
-        
-        // CAMERA MOUNTING CONFIGURATION
-        // Positive X is forward, Positive Y is left, Positive Z is up
-        
-        // Camera offset from robot center (in INCHES)
-        public static final double CAMERA_X_OFFSET_INCHES = -0.261181;   // How far forward the camera is from center
-        public static final double CAMERA_Y_OFFSET_INCHES = -0.261181;   // How far left the camera is from center
-        public static final double CAMERA_Z_OFFSET_INCHES = -39.400;  // Height from ground to camera lens
-        
-        // Camera angles (in DEGREES)
-        // Pitch: positive = camera tilted down (looking at floor)
-        // Yaw: positive = camera rotated left (counterclockwise from above)
-        public static final double CAMERA_PITCH_DEGREES = 35.0;    // Tilt down angle from horizontal
-        public static final double CAMERA_YAW_DEGREES = 0.0;       // Rotation offset from straight ahead
-        
-        // CORAL PHYSICAL PROPERTIES
-        // From FRC 2025 game manual, I think...
-        public static final double CORAL_DIAMETER_INCHES = 4.5;    // Coral outer diameter
-        public static final double CORAL_RADIUS_INCHES = CORAL_DIAMETER_INCHES / 2.0; // 2.25 inches
-        public static final double CORAL_HEIGHT_INCHES = 11.875;   // Coral total height
-
-        // When coral is on the ground, its center is at radius height
-        // This is the target height for trigonometry calculation
-        public static final double CORAL_CENTER_HEIGHT_INCHES = CORAL_RADIUS_INCHES;
-        
-        // DETECTION FILTERING
-        // Used to filter out false positives and low-confidence detections
-        public static final double MIN_TARGET_AREA = 0.05;         // Minimum area % to consider valid
-        public static final double MAX_TARGET_AREA = 50.0;         // Maximum area % (filters huge false positives)
-        public static final double MIN_DETECTION_CONFIDENCE = 0.6; // Minimum neural net confidence (0-1)
-        
-        // Neural network class ID for coral
-        // IMPORTANT: Class 0 is typically the background/invalid class in neural networks
-        // Set this to the actual coral class from your Limelight training (usually 1)
-        // If set to 0, any non-zero class will be accepted
-        public static final int CORAL_CLASS_ID = 0;  // 0 = accept any non-zero class, or set to specific class (e.g., 1)
-        
-        // TRACKING CONFIGURATION
-        // Stale detection timeout - how long before we forget a coral
-        public static final double STALE_DETECTION_TIMEOUT_SECONDS = 0.3;
-        
-        // Maximum distance to consider tracking (inches)
-        public static final double MAX_TRACKING_DISTANCE_INCHES = 120.0; // 10 feet
-        
-        // Association threshold - max distance to associate new detection with existing track (inches)
-        public static final double CORAL_ASSOCIATION_THRESHOLD_INCHES = 12.0;
-        
-        // INTAKE TARGETING
-        // Pickup distance - how close we want to get before intake activation
-        public static final double PICKUP_DISTANCE_INCHES = 8.0;
-        
-        // Alignment tolerance - how centered the coral needs to be (degrees)
-        public static final double ALIGNMENT_TOLERANCE_DEGREES = 5.0;
     }
 
     // Returns true if the value is inside the list
